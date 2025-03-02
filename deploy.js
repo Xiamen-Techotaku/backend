@@ -16,7 +16,7 @@ app.post("/webhook", (req, res) => {
     // 若你有設定密鑰，可在這裡驗證（例如 GitHub HMAC 檢查）
     console.log("Webhook payload:", req.body);
     // 開始更新程序：執行 git pull，然後 reload PM2
-    exec("git pull && pm2 reload e-map", (error, stdout, stderr) => {
+    exec("git pull && pm2 reload backend", (error, stdout, stderr) => {
         if (error) {
             console.error(`部署錯誤: ${error}`);
             return res.status(500).send("部署失敗");
