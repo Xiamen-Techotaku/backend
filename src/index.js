@@ -63,6 +63,9 @@ app.use("/api/collect", collectRoutes);
 const adminRoutes = require("./routes/admin");
 app.use("/api/admin", adminRoutes);
 
+const reviewsRouter = require("./routes/reviews");
+app.use("/api/reviews", reviewsRouter);
+
 // 測試根路由
 app.get("/", (req, res) => {
     res.send("Hello, this is the backend API for ShopName.");

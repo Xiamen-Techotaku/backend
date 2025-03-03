@@ -4,6 +4,11 @@ const router = express.Router();
 const pool = require("../db");
 const ensureAdmin = require("../middlewares/admin");
 
+// 取得目前登入管理員的資訊（管理員專用）
+router.get("/me", ensureAdmin, (req, res) => {
+    res.json({ user: req.user });
+});
+
 // 取得所有訂單（管理員專用）
 router.get("/orders", ensureAdmin, async (req, res, next) => {
     try {
@@ -52,11 +57,6 @@ router.put("/orders/:id/tracking", ensureAdmin, async (req, res, next) => {
         console.error("更新貨運單號失敗：", err);
         next(err);
     }
-});
-
-// 取得目前登入管理員的資訊（管理員專用）
-router.get("/me", ensureAdmin, (req, res) => {
-    res.json({ user: req.user });
 });
 
 module.exports = router;
