@@ -11,6 +11,7 @@ const passport = require("./config/passport"); // 載入我們的 passport 設�
 app.use(
     cors({
         origin: process.env.FRONTEND_URL, // 會從 .env 中讀取
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         credentials: true,
     })
 );
