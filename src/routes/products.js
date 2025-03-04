@@ -214,4 +214,22 @@ router.get("/:id", async (req, res, next) => {
     }
 });
 
+// DELETE /api/products/:id：刪除單筆商品
+router.delete("/:id", ensureAdmin, async (req, res, next) => {
+    const productId = req.params.id;
+    try {
+        // 刪除商品
+        const [result] = await pool.execute("DELETE FROM products WHERE id = ?", [productId]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "找不到該商品" });
+        }
+
+        res.json({ message: "商品刪除成功" });
+    } catch (err) {
+        console.error("刪除商品失敗：", err);
+        next(err);
+    }
+});
+
 module.exports = router;
