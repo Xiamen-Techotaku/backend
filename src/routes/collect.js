@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const https = require("https");
 const pool = require("../db"); // 資料庫連線模組
-const OpenCC = require("opencc-js"); // 載入 opencc-js 插鍵
+const OpenCC = require("opencc-js"); // 載入 opencc-js 插件
 const ensureAdmin = require("../middlewares/admin");
 
 // 建立簡轉繁轉換器：從簡體（cn）轉為繁體（tw）
@@ -27,26 +27,9 @@ function convertSimplifiedToTraditional(data) {
     return data;
 }
 
-// 採集 1688 產品資料接口
-router.post("/1688", ensureAdmin, async (req, res, next) => {
-    const productLink = req.body.link;
-    if (!productLink) {
-        return res.status(400).json({ error: "請提供產品連結" });
-    }
-    try {
-        const parsedUrl = new URL(productLink);
-        const match = parsedUrl.pathname.match(/offer\/(\d+)\.html/);
-        if (!match) {
-            return res.status(400).json({ error: "無法從連結中提取 num_iid" });
-        }
-        const num_iid = match[1];
-        const key = process.env.COLLECT_1688_KEY;
-        const secret = process.env.COLLECT_1688_SECRET;
-        if (!key || !secret) {
-            return res.status(500).json({ error: "未配置 1688 API key/secret" });
-        }
-        const apiUrl = `https://api-gw.onebound.cn/1688/item_get/?key=${key}&secret=${secret}&num_iid=${num_iid}&agent=1&lang=zh-TW`;
-
+// 共用的 HTTPS GET 請求，回傳 Promise
+function fetchData(apiUrl) {
+    return new Promise((resolve, reject) => {
         https
             .get(apiUrl, (resp) => {
                 let data = "";
@@ -56,49 +39,98 @@ router.post("/1688", ensureAdmin, async (req, res, next) => {
                 resp.on("end", () => {
                     try {
                         const jsonData = JSON.parse(data);
-                        // 將從 1688 取得的簡體資料轉換成繁體
-                        const convertedData = convertSimplifiedToTraditional(jsonData);
-                        res.json({ data: convertedData });
+                        resolve(jsonData);
                     } catch (e) {
-                        res.status(500).json({ error: "解析 API 回傳資料失敗" });
+                        reject(new Error("解析 API 回傳資料失敗"));
                     }
                 });
             })
             .on("error", (err) => {
-                console.error("Error: " + err.message);
-                res.status(500).json({ error: err.message });
+                reject(err);
             });
+    });
+}
+
+/**
+ * 通用採集流程
+ * @param {string} productLink 前端傳入的產品連結
+ * @param {RegExp} regex 用來從連結中提取 num_iid 的正則表達式
+ * @param {function} apiUrlBuilder 組裝 API URL 的函式，參數為 (key, secret, num_iid)
+ */
+async function collectProduct(productLink, regex, apiUrlBuilder) {
+    const parsedUrl = new URL(productLink);
+    const match = parsedUrl.pathname.match(regex);
+    if (!match) {
+        throw new Error("無法從連結中提取 num_iid");
+    }
+    const num_iid = match[1];
+    const key = process.env.COLLECT_KEY;
+    const secret = process.env.COLLECT_SECRET;
+    if (!key || !secret) {
+        throw new Error("未配置 API key/secret");
+    }
+    const apiUrl = apiUrlBuilder(key, secret, num_iid);
+    const data = await fetchData(apiUrl);
+    return convertSimplifiedToTraditional(data);
+}
+
+// 1688 採集接口
+router.post("/1688", ensureAdmin, async (req, res, next) => {
+    const productLink = req.body.link;
+    if (!productLink) {
+        return res.status(400).json({ error: "請提供產品連結" });
+    }
+    try {
+        const data = await collectProduct(
+            productLink,
+            /offer\/(\d+)\.html/,
+            (key, secret, num_iid) =>
+                `https://api-gw.onebound.cn/1688/item_get/?key=${key}&secret=${secret}&num_iid=${num_iid}&agent=1&lang=zh-TW`
+        );
+        res.json({ data });
     } catch (e) {
         console.error(e);
-        return res.status(400).json({ error: "連結格式錯誤" });
+        res.status(400).json({ error: e.message });
     }
 });
 
-// 上傳產品資料接口（改為直接處理 URL，不進行檔案上傳）
+// 京東 採集接口
+router.post("/jd", ensureAdmin, async (req, res, next) => {
+    const productLink = req.body.link;
+    if (!productLink) {
+        return res.status(400).json({ error: "請提供產品連結" });
+    }
+    try {
+        const data = await collectProduct(
+            productLink,
+            /\/(\d+)\.html/,
+            (key, secret, num_iid) =>
+                `https://api-gw.onebound.cn/jd/item_get/?key=${key}&secret=${secret}&num_iid=${num_iid}&domain_type=jd&lang=zh-CN`
+        );
+        res.json({ data });
+    } catch (e) {
+        console.error(e);
+        res.status(400).json({ error: e.message });
+    }
+});
+
+// 上傳產品資料接口（直接處理 URL，不進行檔案上傳）
 router.post("/upload", async (req, res, next) => {
-    // 從前端傳入的資料，格式例如：
-    // {
-    //   name: "...",
-    //   category_id: "...",
-    //   price: "...",
-    //   description: "...",
-    //   image_url: "...",         // 主圖片URL
-    //   images: [{ image_url: "..." }, ...],
-    //   specifications: [{ name: "...", price: "..." }, ...],
-    //   options: [{ option_name: "...", option_value: "..." }, ...]
-    // }
     let { name, category_id, price, description, image_url, images, specifications, options } =
         req.body;
-    if (!name || !category_id || !price || !description) {
-        return res.status(400).json({ error: "請填寫所有必填欄位" });
+    // 僅要求必填欄位：名稱、分類與價格
+    if (!name || !category_id || !price) {
+        console.log("請填寫必填欄位：名稱、分類、價格");
+        return res.status(400).json({ error: "請填寫必填欄位：名稱、分類、價格" });
     }
+    // 如果沒有描述，預設為空字串
+    description = description || "";
 
     try {
-        // 對主要文字欄位進行簡轉繁處理
+        // 進行簡轉繁處理
         name = converter(name);
         description = converter(description);
 
-        // 若有規格，轉換每個規格的名稱
         if (specifications && Array.isArray(specifications)) {
             specifications = specifications.map((spec) => {
                 if (spec.name) {
@@ -108,7 +140,6 @@ router.post("/upload", async (req, res, next) => {
             });
         }
 
-        // 若有選項，轉換選項名稱及值
         if (options && Array.isArray(options)) {
             options = options.map((opt) => {
                 if (opt.option_name) {
@@ -121,23 +152,20 @@ router.post("/upload", async (req, res, next) => {
             });
         }
 
-        // 將基本資料插入 products 表
-        // 此處不再寫入 image_url 欄位（假設 products 表沒有此欄位），
-        // 主圖片可儲存在 product_images 表中
+        // 插入 products 表
         const [result] = await pool.execute(
             `INSERT INTO products (category_id, name, description, price)
-       VALUES (?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?)`,
             [category_id, name, description, price]
         );
         const productId = result.insertId;
 
         // 插入主圖片及圖片集合到 product_images 表
-        // 假設前端傳入的 images 陣列中，每個物件皆有 image_url 屬性
         if (images && Array.isArray(images)) {
             for (const imgObj of images) {
                 await pool.execute(
                     `INSERT INTO product_images (product_id, image_url)
-           VALUES (?, ?)`,
+                     VALUES (?, ?)`,
                     [productId, imgObj.image_url]
                 );
             }
@@ -149,7 +177,7 @@ router.post("/upload", async (req, res, next) => {
                 if (!spec.name || spec.price === undefined) continue;
                 await pool.execute(
                     `INSERT INTO product_specifications (product_id, name, price)
-           VALUES (?, ?, ?)`,
+                     VALUES (?, ?, ?)`,
                     [productId, spec.name, spec.price]
                 );
             }
@@ -161,7 +189,7 @@ router.post("/upload", async (req, res, next) => {
                 if (!opt.option_name || !opt.option_value) continue;
                 await pool.execute(
                     `INSERT INTO product_options (product_id, option_name, option_value)
-           VALUES (?, ?, ?)`,
+                     VALUES (?, ?, ?)`,
                     [productId, opt.option_name, opt.option_value]
                 );
             }
