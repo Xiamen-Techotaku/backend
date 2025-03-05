@@ -54,13 +54,14 @@ router.post("/", ensureAuthenticated, async (req, res, next) => {
         // 1. 寫入 orders 表 (注意：必須包含 user_id)
         const [orderResult] = await pool.execute(
             `INSERT INTO orders (user_id, customer_name, phone, store_id, store_name, store_address)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?)`,
             [userId, customerName, phone, store.store_id, store.store_name, ""]
         );
         const orderId = orderResult.insertId;
         console.log("訂單建立成功，orderId:", orderId);
 
         // 2. 依購物車項目寫入 order_items 表
+        // 注意：根據新的資料庫設計，order_items 儲存 option_id 而非 options 字串
         for (const item of cartItems) {
             let unitPrice = 0;
             // 若有 specification_id，則從 product_specifications 查詢價格
@@ -87,22 +88,22 @@ router.post("/", ensureAuthenticated, async (req, res, next) => {
                     console.warn(`找不到 product_id ${item.product_id} 的資料，預設價格為 0`);
                 }
             }
-            // 插入 order_items
+            // 插入 order_items，使用 item.option_id（已改名）
             await pool.execute(
                 `INSERT INTO order_items 
-         (order_id, product_id, specification_id, options, quantity, unit_price)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+                 (order_id, product_id, specification_id, option_id, quantity, unit_price)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
                 [
                     orderId,
                     item.product_id,
                     item.specification_id || null,
-                    item.options, // 假設 options 已為 JSON 字串
+                    item.option_id || null,
                     item.quantity,
                     unitPrice,
                 ]
             );
             console.log(
-                `訂單項目插入：product_id ${item.product_id}, specification_id ${item.specification_id}, quantity ${item.quantity}, unit_price ${unitPrice}`
+                `訂單項目插入：product_id ${item.product_id}, specification_id ${item.specification_id}, option_id ${item.option_id}, quantity ${item.quantity}, unit_price ${unitPrice}`
             );
         }
 
@@ -135,6 +136,7 @@ router.get("/my", ensureAuthenticated, async (req, res, next) => {
  * GET /api/orders/:id
  * 取得單筆訂單詳情及訂單項目
  * 僅允許目前登入的使用者查詢自己的訂單
+ * 此處將 order_items 連接 product_specifications 與 product_options，回傳更詳細的規格與選項資訊
  */
 router.get("/:id", ensureAuthenticated, async (req, res, next) => {
     const orderId = req.params.id;
@@ -149,15 +151,24 @@ router.get("/:id", ensureAuthenticated, async (req, res, next) => {
 
         // 如果訂單的 user_id 與當前使用者不同，則需要檢查管理員權限
         if (order.user_id !== userId) {
-            // 這裡使用你現有的 ensureAdmin 邏輯，但直接從 req.user 檢查即可
             if (!req.user.is_admin) {
                 return res.status(403).json({ error: "沒有權限查看" });
             }
         }
 
-        // 查詢訂單項目
+        // 使用 JOIN 從 product_specifications 與 product_options 表取得詳細資訊
         const [orderItems] = await pool.execute(
-            "SELECT * FROM order_items WHERE order_id = ? ORDER BY id",
+            `SELECT 
+                oi.*, 
+                ps.name AS spec_name, 
+                ps.price AS spec_price, 
+                po.option_name, 
+                po.option_value 
+             FROM order_items AS oi
+             LEFT JOIN product_specifications AS ps ON oi.specification_id = ps.id
+             LEFT JOIN product_options AS po ON oi.option_id = po.id
+             WHERE oi.order_id = ?
+             ORDER BY oi.id`,
             [orderId]
         );
 

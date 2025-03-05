@@ -38,7 +38,10 @@ function uploadImageToCloudinary(fileBuffer) {
 
 // POST /api/products：上架商品 API（未重複，此處略）
 router.post("/", ensureAdmin, upload.array("images"), async (req, res, next) => {
-    const { name, category_id, price, description } = req.body;
+    let { name, category_id, price, description } = req.body;
+    // 如果 price 有小數點，則做四捨五入處理
+    price = Math.round(parseFloat(price));
+
     let specifications = [];
     let options = [];
     if (req.body.specifications) {
@@ -61,7 +64,7 @@ router.post("/", ensureAdmin, upload.array("images"), async (req, res, next) => 
     try {
         const [result] = await pool.execute(
             `INSERT INTO products (category_id, name, description, price)
-       VALUES (?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?)`,
             [category_id, name, description, price]
         );
         const productId = result.insertId;
@@ -71,7 +74,7 @@ router.post("/", ensureAdmin, upload.array("images"), async (req, res, next) => 
                 const imageUrl = uploadResult.secure_url;
                 await pool.execute(
                     `INSERT INTO product_images (product_id, image_url)
-           VALUES (?, ?)`,
+                     VALUES (?, ?)`,
                     [productId, imageUrl]
                 );
             }
@@ -81,7 +84,7 @@ router.post("/", ensureAdmin, upload.array("images"), async (req, res, next) => 
                 if (!spec.name || spec.price === undefined) continue;
                 await pool.execute(
                     `INSERT INTO product_specifications (product_id, name, price)
-           VALUES (?, ?, ?)`,
+                     VALUES (?, ?, ?)`,
                     [productId, spec.name, spec.price]
                 );
             }
@@ -91,7 +94,7 @@ router.post("/", ensureAdmin, upload.array("images"), async (req, res, next) => 
                 if (!opt.option_name || !opt.option_value) continue;
                 await pool.execute(
                     `INSERT INTO product_options (product_id, option_name, option_value)
-           VALUES (?, ?, ?)`,
+                     VALUES (?, ?, ?)`,
                     [productId, opt.option_name, opt.option_value]
                 );
             }

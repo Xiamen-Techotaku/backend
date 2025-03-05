@@ -126,6 +126,9 @@ router.post("/upload", async (req, res, next) => {
     // 如果沒有描述，預設為空字串
     description = description || "";
 
+    // 先檢查 price 是否有小數點，有的話四捨五入
+    price = Math.round(parseFloat(price));
+
     try {
         // 進行簡轉繁處理
         name = converter(name);

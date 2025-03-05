@@ -36,21 +36,21 @@ router.get("/", ensureAuthenticated, async (req, res, next) => {
  * {
  *    productId: <數字>,
  *    specificationId: <數字 or null>,
- *    options: { 顏色: "紅色", 尺碼: "M", ... },
+ *    optionId: <數字 or null>,    // 這裡改為傳送選項的 id
  *    quantity: <數字>
  * }
  */
 router.post("/", ensureAuthenticated, async (req, res, next) => {
     const userId = req.user.id;
-    const { productId, specificationId, options, quantity } = req.body;
+    const { productId, specificationId, optionId, quantity } = req.body;
     if (!productId) {
         return res.status(400).json({ error: "productId 為必填" });
     }
     try {
-        // 檢查是否已有相同的購物車項目（使用 <=> 處理 null 比較）
+        // 檢查是否已有相同的購物車項目
         const [rows] = await pool.execute(
-            "SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND specification_id <=> ? AND options = ?",
-            [userId, productId, specificationId || null, JSON.stringify(options || {})]
+            "SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND specification_id <=> ? AND option_id <=> ?",
+            [userId, productId, specificationId || null, optionId || null]
         );
         if (rows.length > 0) {
             // 已存在則更新數量
@@ -61,16 +61,10 @@ router.post("/", ensureAuthenticated, async (req, res, next) => {
                 existing.id,
             ]);
         } else {
-            // 否則插入新的購物車項目
+            // 插入新的購物車項目
             await pool.execute(
-                "INSERT INTO cart_items (user_id, product_id, specification_id, options, quantity) VALUES (?, ?, ?, ?, ?)",
-                [
-                    userId,
-                    productId,
-                    specificationId || null,
-                    JSON.stringify(options || {}),
-                    quantity || 1,
-                ]
+                "INSERT INTO cart_items (user_id, product_id, specification_id, option_id, quantity) VALUES (?, ?, ?, ?, ?)",
+                [userId, productId, specificationId || null, optionId || null, quantity || 1]
             );
         }
         // 返回更新後的購物車項目
