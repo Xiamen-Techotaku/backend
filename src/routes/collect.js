@@ -114,6 +114,26 @@ router.post("/jd", ensureAdmin, async (req, res, next) => {
     }
 });
 
+// 京東 採集接口
+router.post("/jd_sku", ensureAdmin, async (req, res, next) => {
+    const productLink = req.body.link;
+    if (!productLink) {
+        return res.status(400).json({ error: "請提供產品連結" });
+    }
+    try {
+        const data = await collectProduct(
+            productLink,
+            /\/(\d+)\.html/,
+            (key, secret, num_iid) =>
+                `https://api-gw.onebound.cn/jd/item_sku/?key=${key}&secret=${secret}&num_iid=${num_iid}&domain_type=jd&lang=zh-CN`
+        );
+        res.json({ data });
+    } catch (e) {
+        console.error(e);
+        res.status(400).json({ error: e.message });
+    }
+});
+
 // 上傳產品資料接口（直接處理 URL，不進行檔案上傳）
 router.post("/upload", async (req, res, next) => {
     let { name, category_id, price, description, image_url, images, specifications, options } =

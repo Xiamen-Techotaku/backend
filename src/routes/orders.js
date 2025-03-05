@@ -28,6 +28,12 @@ router.post("/", ensureAuthenticated, async (req, res, next) => {
     const { customerName, phone, store } = req.body;
     const userId = req.user.id;
 
+    // 驗證手機號碼格式：09開頭的十碼數字
+    const phoneRegex = /^09\d{8}$/;
+    if (!phoneRegex.test(phone)) {
+        return res.status(400).json({ error: "請輸入有效的手機號碼，格式為09開頭的十碼數字" });
+    }
+
     // 取得使用者的購物車項目
     let cartItems;
     try {
