@@ -146,6 +146,41 @@ router.get("/", async (req, res, next) => {
     }
 });
 
+router.get("/search", async (req, res, next) => {
+    try {
+        const { q } = req.query;
+        if (!q || q.trim() === "") {
+            return res.json({ products: [] });
+        }
+        const searchTerm = `%${q}%`;
+        const query = `
+        SELECT p.*,
+          (
+            SELECT pi.image_url 
+            FROM product_images pi 
+            WHERE pi.product_id = p.id 
+            ORDER BY pi.sort_order ASC 
+            LIMIT 1
+          ) AS image_url,
+          (
+            SELECT CASE 
+                     WHEN MIN(ps.price) = MAX(ps.price) THEN CONCAT('$', MIN(ps.price))
+                     ELSE CONCAT('$', MIN(ps.price), ' - $', MAX(ps.price))
+                   END
+            FROM product_specifications ps
+            WHERE ps.product_id = p.id
+          ) AS spec_price
+        FROM products p
+        WHERE p.name LIKE ? OR p.description LIKE ?
+      `;
+        const [rows] = await pool.execute(query, [searchTerm, searchTerm]);
+        res.json({ products: rows });
+    } catch (err) {
+        console.error("搜尋產品失敗：", err);
+        next(err);
+    }
+});
+
 router.get("/random", async (req, res, next) => {
     try {
         // 轉換 limit 為整數，預設 6 筆
