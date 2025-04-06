@@ -1,77 +1,114 @@
 // app.js
 require("dotenv").config();
 const express = require("express");
-const app = express();
-const port = process.env.PORT || 4000;
 const session = require("express-session");
 const cors = require("cors");
-const passport = require("./config/passport"); // 載入我們的 passport 設定
+const passport = require("./config/passport");
+const path = require("path");
+const { createServer: createViteServer } = require("vite");
 
-// 啟用 CORS
-app.use(
-    cors({
-        origin: process.env.FRONTEND_URL, // 會從 .env 中讀取
-        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        credentials: true,
-    })
-);
+async function startServer() {
+    const app = express();
+    const port = process.env.PORT || 4000;
 
-// 解析 JSON 請求
-app.use(express.json());
+    // --- API 相關中介層 ---
+    app.use(
+        cors({
+            origin: process.env.FRONTEND_URL, // 從 .env 讀取
+            methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            credentials: true,
+        })
+    );
 
-// 解析 URL-encoded 資料（如果需要）
-app.use(express.urlencoded({ extended: true }));
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
 
-// 設定靜態檔案目錄，讓 /uploads 路徑可以存取 uploads 資料夾內的檔案
-app.use("/uploads", express.static("uploads"));
+    // 提供靜態檔案（例如上傳檔案）
+    app.use("/uploads", express.static("uploads"));
 
-// 使用 Express Session
-app.use(
-    session({
-        secret: process.env.SESSION_SECRET, // 請使用一個強密鑰
-        resave: false,
-        saveUninitialized: false,
-    })
-);
+    // 使用 express-session
+    app.use(
+        session({
+            secret: process.env.SESSION_SECRET,
+            resave: false,
+            saveUninitialized: false,
+        })
+    );
 
-// 初始化 Passport 並使用 Session
-app.use(passport.initialize());
-app.use(passport.session());
+    // 初始化 Passport
+    app.use(passport.initialize());
+    app.use(passport.session());
 
-// 使用 Auth 路由
-const authRoutes = require("./routes/auth");
-app.use("/api/auth", authRoutes);
+    // --- API Routes ---
+    const authRoutes = require("./routes/auth");
+    app.use("/api/auth", authRoutes);
 
-const categoryRoutes = require("./routes/categories");
-app.use("/api/categories", categoryRoutes);
+    const categoryRoutes = require("./routes/categories");
+    app.use("/api/categories", categoryRoutes);
 
-// 載入產品路由
-const productRoutes = require("./routes/products");
-app.use("/api/products", productRoutes);
+    const productRoutes = require("./routes/products");
+    app.use("/api/products", productRoutes);
 
-const cartRoutes = require("./routes/cart");
-app.use("/api/cart", cartRoutes);
+    const cartRoutes = require("./routes/cart");
+    app.use("/api/cart", cartRoutes);
 
-const ordersRoutes = require("./routes/orders");
-app.use("/api/orders", ordersRoutes);
+    const ordersRoutes = require("./routes/orders");
+    app.use("/api/orders", ordersRoutes);
 
-const retailRoutes = require("./routes/retail");
-app.use("/api/retail", retailRoutes);
+    const retailRoutes = require("./routes/retail");
+    app.use("/api/retail", retailRoutes);
 
-const collectRoutes = require("./routes/collect");
-app.use("/api/collect", collectRoutes);
+    const collectRoutes = require("./routes/collect");
+    app.use("/api/collect", collectRoutes);
 
-const adminRoutes = require("./routes/admin");
-app.use("/api/admin", adminRoutes);
+    const adminRoutes = require("./routes/admin");
+    app.use("/api/admin", adminRoutes);
 
-const reviewsRouter = require("./routes/reviews");
-app.use("/api/reviews", reviewsRouter);
+    const reviewsRouter = require("./routes/reviews");
+    app.use("/api/reviews", reviewsRouter);
 
-// 測試根路由
-app.get("/", (req, res) => {
-    res.send("Hello, this is the backend API for ShopName.");
-});
+    // --- 整合 Vite SSR ---
+    // 建立 Vite 伺服器（middleware 模式）
+    const vite = await createViteServer({
+        server: { middlewareMode: "ssr" },
+        appType: "custom", // 表示我們使用自定義 Express 伺服器
+    });
+    // 使用 Vite 的中介軟體
+    app.use(vite.middlewares);
 
-app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
-});
+    // Catch-all route: 非 API 路由則進行 SSR 渲染
+    app.use("*", async (req, res) => {
+        try {
+            const url = req.originalUrl;
+            // 載入 SSR 入口模組（位於前端 src/entry-server.js）
+            const { render } = await vite.ssrLoadModule("/src/entry-server.js");
+            // 呼叫 render 函式取得渲染結果
+            const { appContent, headTags } = await render(url);
+
+            // 組合完整 HTML，這裡可根據需要加入樣板或其他靜態內容
+            const html = `
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            ${headTags}
+          </head>
+          <body>
+            <div id="app">${appContent}</div>
+            <script type="module" src="/src/entry-client.js"></script>
+          </body>
+        </html>
+      `;
+            res.status(200).set({ "Content-Type": "text/html" }).end(html);
+        } catch (err) {
+            vite.ssrFixStacktrace(err);
+            console.error(err);
+            res.status(500).end(err.message);
+        }
+    });
+
+    app.listen(port, () => {
+        console.log(`Server is running on port ${port}`);
+    });
+}
+
+startServer();
